@@ -629,27 +629,38 @@ const anxiety: Style = {
     { name: 'risset rhythm', play(s, b) {
       // Every tick of every rung that falls in this beat. A rung starting at k ticks a cycle
       // speeds up as 2^(t/C), so its nth tick comes at t = C log2(1 + n/k); k is a whole
-      // number, so by the end of the cycle each rung has become the one above it.
+      // number, so by the end of the cycle each rung has become the one above it. All of the
+      // beat's ticks play on one stream of noise, ticks of two rungs at once as one.
       const C = ANX_CYCLE * b.meter.beats, t0 = (b.bar % ANX_CYCLE) * b.meter.beats + b.beat;
       const m = Math.max(1, Math.round((RISSET_BASE * C) / Math.LN2));
+      const ticks: [number, number, number][] = [];
       for (let i = 0; i < RISSET_RUNGS; i++) {
         const k = m * 2 ** i;
         for (let n = Math.ceil(k * (2 ** (t0 / C) - 1) - 1e-9); ; n++) {
           const t = C * Math.log2(1 + n / k);
           if (t >= t0 + 1 - 1e-9) break;
           const x = i + t / C, level = rissetLevel(x) * 0.5;
-          if (level > 0.003) s.hat(b.at + (t - t0) * b.len, level, 0.016, 3000 + 1100 * x);
+          if (level > 0.003) ticks.push([b.at + (t - t0) * b.len, level, 3000 + 1100 * x]);
         }
       }
+      ticks.sort((p, q) => p[0] - q[0]);
+      const merged: [number, number, number][] = [];
+      for (const tk of ticks) {
+        const prev = merged[merged.length - 1];
+        if (prev && tk[0] - prev[0] < 0.004) { if (tk[1] > prev[1]) prev[2] = tk[2]; prev[1] = Math.min(0.6, prev[1] + tk[1]); }
+        else merged.push(tk);
+      }
+      s.ticks(merged, 0.016);
     } },
     { name: 'shepard tone', play(s, b) {
-      // Octaves of a sine, each gliding up across this beat as far as the cycle goes in a
-      // beat, louder the nearer the middle of the bell; the top fades out, a new one in under.
-      const p0 = anxPhase(b), p1 = p0 + 1 / (ANX_CYCLE * b.meter.beats);
+      // Octaves of a sine, each gliding up across this bar as far as the cycle goes in a bar,
+      // louder the nearer the middle of the bell; the top fades out, a new one in under.
+      if (b.beat !== 0) return;
+      const p0 = anxPhase(b), p1 = p0 + 1 / ANX_CYCLE;
       for (let k = 0; k < SHEPARD_OCTAVES; k++) {
         const v0 = shepardLevel(k + p0) * 0.065, v1 = shepardLevel(k + p1) * 0.065;
         if (Math.max(v0, v1) < 0.002) continue;
-        s.glide(b.at, 55 * 2 ** (k + p0), 55 * 2 ** (k + p1), b.len + 0.02, v0, v1);
+        s.glide(b.at, 55 * 2 ** (k + p0), 55 * 2 ** (k + p1), restOfBar(b) + 0.02, v0, v1);
       }
     } },
     { name: 'hemiola ostinato', play(s, b) {
@@ -666,10 +677,11 @@ const anxiety: Style = {
     } },
     { name: 'swelling strings', play(s, b) {
       // The tense chord held by strings each bar, swelling and ebbing over the cycle, their
-      // bow shaking faster and their tone opening as they swell: no edge, so no seam.
+      // bow shaking faster and their tone opening as they swell: no edge, so no seam. In
+      // the light orchestra the top A, an octave over the bottom one, is left out.
       if (b.beat !== 0) return;
       const w = Math.sin(Math.PI * anxPhase(b)) ** 2;
-      for (const n of ANX_CLUSTER) s.section(b.at, hz(n), restOfBar(b), 0.04 + 0.14 * w, { cutoff: 1200 + 3000 * w, bow: 0.3, tremolo: 6 + 8 * w });
+      for (const n of s.light ? ANX_CLUSTER.slice(0, -1) : ANX_CLUSTER) s.section(b.at, hz(n), restOfBar(b), 0.04 + 0.14 * w, { cutoff: 1200 + 3000 * w, bow: 0.3, tremolo: 6 + 8 * w });
     } },
   ],
 };

@@ -193,6 +193,31 @@ export class Synth {
     this.burst(at, end - at, f);
   }
 
+  /**
+   * A run of hi-hat ticks, all on one stream of noise: like a hat() for each, but as cheap as
+   * a single one however many there are. Each tick is [when, how loud, its highpass (Hz)],
+   * in time order; one coming before the last has died away chokes it, as a closed hat does.
+   */
+  ticks(ticks: readonly (readonly [number, number, number])[], decay = 0.02) {
+    if (!ticks.length) return;
+    const ctx = this.ctx, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    const start = ticks[0][0], end = ticks[ticks.length - 1][0] + decay * 6;
+    f.type = 'highpass';
+    g.gain.setValueAtTime(0, start);
+    for (const [at, vol, freq] of ticks) {
+      f.frequency.setValueAtTime(freq, at);
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(vol, at + 0.001);
+      g.gain.setTargetAtTime(0, at + 0.001, decay);
+    }
+    g.gain.setValueAtTime(0, end);
+    src.buffer = this.noise;
+    src.loop = true;
+    src.connect(f).connect(g).connect(this.out);
+    src.start(start, noteRand() * 0.5);
+    src.stop(end);
+  }
+
   /** A woodblock or a rim: a very short, hollow tone. A longer decay makes a temple block. */
   block(at: number, vol = 1, freq = 900, decay = 0.018) {
     const osc = this.ctx.createOscillator(), end = at + decay * 7;
