@@ -715,6 +715,95 @@ export class Synth {
     osc.stop(end + 0.01);
   }
 
+  /**
+   * A fat analog synth, the funk synth bass or a whining lead: two saws (or squares) a little
+   * apart, sliding up into the note from `from` (0 for none), through a resonant lowpass
+   * that opens at the strike to `cutoff` and settles lower. `vibrato` (as a share of the
+   * pitch) wavers it once the note is held, the lead's whine. `wide: false` plays one
+   * oscillator instead of two, for fast notes where the width is not heard.
+   */
+  moog(at: number, from: number, freq: number, dur: number, vol: number, o: { cutoff?: number; wave?: OscillatorType; slide?: number; vibrato?: number; wide?: boolean } = {}) {
+    const { cutoff = 1200, wave = 'sawtooth', slide = 0.07, vibrato = 0, wide = true } = o, ctx = this.ctx, end = at + dur + 0.3;
+    const f = ctx.createBiquadFilter(), g = ctx.createGain();
+    f.type = 'lowpass';
+    f.Q.value = 4;
+    f.frequency.setValueAtTime(cutoff, at);
+    f.frequency.setTargetAtTime(Math.max(cutoff * 0.35, freq * 2), at + 0.01, 0.12);
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(vol, at + 0.008);
+    g.gain.setTargetAtTime(vol * 0.7, at + 0.008, 0.2);
+    g.gain.setTargetAtTime(0, at + dur, 0.05);
+    f.connect(g).connect(this.out);
+    let lfo: OscillatorNode | null = null, depth: GainNode | null = null;
+    if (vibrato > 0 && dur > 0.3 && !this.light) {
+      lfo = ctx.createOscillator();
+      depth = ctx.createGain();
+      lfo.frequency.value = 5.5;
+      depth.gain.setValueAtTime(0, at);
+      depth.gain.linearRampToValueAtTime(freq * vibrato, at + Math.min(dur, 0.5));
+      lfo.connect(depth);
+      lfo.start(at);
+      lfo.stop(end);
+    }
+    for (const cents of wide ? this.voices([-7, 7]) : [0]) {
+      const osc = ctx.createOscillator();
+      osc.type = wave;
+      osc.frequency.setValueAtTime(from || freq, at);
+      if (from) osc.frequency.exponentialRampToValueAtTime(freq, at + slide);
+      osc.detune.value = cents;
+      if (depth) depth.connect(osc.frequency);
+      osc.connect(f);
+      osc.start(at);
+      osc.stop(end);
+    }
+  }
+
+  /**
+   * A handclap: a few hands a hair apart, then a short room. One burst of noise in a band,
+   * its level struck three times in quick succession, so it costs no more than a snare.
+   */
+  clap(at: number, vol: number) {
+    const ctx = this.ctx, band = ctx.createBiquadFilter(), g = ctx.createGain(), end = at + 0.022 + 0.07 * 6;
+    band.type = 'bandpass';
+    band.frequency.value = 1300;
+    band.Q.value = 1.2;
+    g.gain.setValueAtTime(0, at);
+    for (const [dt, level, decay] of [[0, 0.7, 0.004], [0.011, 0.8, 0.004], [0.022, 1, 0.07]] as const) {
+      g.gain.linearRampToValueAtTime(vol * level, at + dt + 0.001);
+      g.gain.setTargetAtTime(0, at + dt + 0.001, decay);
+    }
+    g.gain.setValueAtTime(0, end);
+    band.connect(g).connect(this.out);
+    this.burst(at, end - at, band);
+  }
+
+  /**
+   * A talk box: a synth "singing" through a mouth. A saw through two formants that move from
+   * an "oo" (300 and 800 Hz) to an open "ah" (750 and 1200) and back as the note plays, "wow".
+   */
+  talkbox(at: number, freq: number, dur: number, vol: number) {
+    const ctx = this.ctx, end = at + dur + 0.15, g = ctx.createGain(), osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(freq * 0.98, at);
+    osc.frequency.exponentialRampToValueAtTime(freq, at + 0.05);
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(vol * 3, at + 0.02);
+    g.gain.setTargetAtTime(0, at + dur, 0.04);
+    g.connect(this.out);
+    const open = at + Math.min(dur * 0.45, 0.18);
+    for (const [oo, ah, q] of [[300, 750, 7], [800, 1200, 10]] as const) {
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.Q.value = q;
+      f.frequency.setValueAtTime(oo, at);
+      f.frequency.exponentialRampToValueAtTime(ah, open);
+      f.frequency.exponentialRampToValueAtTime(oo, at + dur);
+      osc.connect(f).connect(g);
+    }
+    osc.start(at);
+    osc.stop(end);
+  }
+
   /** A strummed chord: the strings one after another, a few milliseconds apart. */
   strum(at: number, freqs: readonly number[], vol: number, o: { bright?: number; seconds?: number; damp?: number; gap?: number } = {}) {
     const { gap = 0.012, ...rest } = o;
