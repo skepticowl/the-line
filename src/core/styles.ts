@@ -305,7 +305,7 @@ const lotus: Style = {
 const TEK_CHORDS = 'Am7 Dm7 Fmaj7 E7';
 
 const NOTE: Record<string, number> = { A: 0, B: 2, C: 3, D: 5, E: 7, F: 8, G: 10 };
-const QUALITY: Record<string, number[]> = { '': [0, 4, 7], m: [0, 3, 7], '7': [0, 4, 7, 10], m7: [0, 3, 7, 10], maj7: [0, 4, 7, 11], dim: [0, 3, 6] };
+const QUALITY: Record<string, number[]> = { '': [0, 4, 7], m: [0, 3, 7], '7': [0, 4, 7, 10], m7: [0, 3, 7, 10], maj7: [0, 4, 7, 11], dim: [0, 3, 6], '9': [0, 4, 7, 10, 14] };
 /**
  * Reads chord names like 'Am7 Fmaj7' into chords. Each note goes between G sharp and G
  * below A440, so the chords sit close together and the stabs step rather than leap.
@@ -686,5 +686,87 @@ const anxiety: Style = {
   ],
 };
 
-export const STYLES: readonly Style[] = [vibe, chill, trip, lotus, epic, anxiety, tekno, chiptune, bluegrass];
+// ---------------------------------------------------------------- Funky: hard funk, everything on the one
+
+/**
+ * The chords, a bar each, by name like TEK_CHORDS: eight bars of ninth chords, all bright
+ * dominants. A9 twice, up to D9 twice, back home, then a climb from C9 through D9 to E9,
+ * which pulls back to A9 on the one.
+ */
+const FUNK_CHORDS = 'A9 A9 D9 D9 A9 C9 D9 E9';
+const FUNK_PROG = chords(FUNK_CHORDS);
+/** A mixolydian, in semitones above A: the major with a flat seventh (G), the sound of a ninth chord. */
+const A_MIXOLYDIAN = [0, 2, 4, 5, 7, 9, 10];
+/** A major pentatonic, from A 440 up: bright, for the lead. */
+const MAJOR_PENTA = [0, 2, 4, 7, 9, 12, 14, 16, 19];
+/**
+ * The synth bass over two beats of four sixteenths, the first beat a strong one:
+ * [sixteenth, semitones over the root, how many sixteenths it is held, sliding up from
+ * this many semitones under (0 for none)]. Hard on the one, the octave popped, then down
+ * through the seventh and the fifth, sliding into the major third on the way back to the root.
+ */
+type BassNote = readonly [number, number, number, number];
+const FUNK_BASS: readonly (readonly BassNote[])[] = [
+  [[0, 0, 2, 0], [2, 12, 1, 0], [3, 10, 1, 0]],
+  [[1, 7, 2, 0], [3, 4, 1, 2]],
+];
+/** The talk box's riff over two beats, "wow, wow-wow": [sixteenth, semitones over the chord's root, sixteenths held]. */
+const FUNK_TALK: readonly (readonly (readonly [number, number, number])[])[] = [[[2, 4, 2]], [[0, 7, 1], [1, 9, 3]]];
+/** The whining lead's tune, A major pentatonic an octave up. */
+const funkLead = new Tune(MAJOR_PENTA.map((x) => x + 12), 0.35);
+
+const funky: Style = {
+  id: 'funky', name: 'FUNKY', swing: 0.1,
+  tint: { wave: 'sawtooth', cutoff: 3200, echo: 0.15, echoBeats: 0.5 },
+  scale: A_MIXOLYDIAN,
+  layers: [
+    { name: 'kick and synth bass', play(s, b) {
+      // The kick hard on the one, kicked again on the "and" of each strong beat and just
+      // before the backbeat; under it the fat synth bass, tight, sliding into its notes.
+      const low = lowRoot(chordAt(FUNK_PROG, b)) + 12;
+      if (b.group) {
+        s.kick(b.t(0), b.beat === 0 ? 1 : 0.85, { from: 110, to: 42, decay: 0.11 });
+        s.kick(b.t(2), 0.5, { from: 110, to: 42, decay: 0.07 });
+      } else s.kick(b.t(3), 0.45, { from: 110, to: 42, decay: 0.06 });
+      for (const [k, n, held, under] of FUNK_BASS[b.group ? 0 : 1]) {
+        s.moog(b.t(k), under ? hz(low + n - under) : 0, hz(low + n), (b.len / 4) * held * 0.8, 0.36, { cutoff: 1100, wide: false });
+      }
+    } },
+    { name: 'handclaps and hats', play(s, b) {
+      // Handclaps, a room full of them: a big clap on every backbeat, a quick double clap
+      // pushing into it every other bar, and a clap on the "and" of the last beat of each
+      // phrase of four. Tight hats on the sixteenths but the softest.
+      if (b.groupEnd && !b.group) s.clap(b.t(0), 0.85);
+      if (b.group && b.beat !== 0 && b.bar % 2 === 1) { s.clap(b.t(2), 0.35); s.clap(b.t(3), 0.5); }
+      if (b.beat === b.meter.beats - 1 && b.bar % 4 === 3) s.clap(b.t(2), 0.6);
+      for (const [k, vol] of [[0, 0.12], [2, 0.09], [3, 0.06]]) s.hat(b.t(k), vol, 0.014, 9000);
+    } },
+    { name: 'electric piano', play(s, b) {
+      // The ninth chord on a Rhodes, as funk players voice it, the third, seventh and ninth
+      // (the bass has the root), stabbed short on the off sixteenths the groove leans on,
+      // and pushed ahead of each bar on its last sixteenth.
+      const c = chordAt(FUNK_PROG, b), notes = [c.notes[1], c.notes[3], c.notes[4]].map((n) => hz(n + 12));
+      const last = b.beat === b.meter.beats - 1;
+      for (const k of b.group ? [1] : last ? [] : [2]) for (const n of notes) s.keys(b.t(k), n, b.len * 0.12, 0.11);
+      if (last) for (const n of notes) s.keys(b.t(3), n, b.len * 0.6, 0.1);
+    } },
+    { name: 'talk box', play(s, b) {
+      // The talk box singing its riff up the chord, "wow, wow-wow", answering the bass.
+      const root = chordAt(FUNK_PROG, b).root;
+      for (const [k, n, held] of FUNK_TALK[b.group ? 0 : 1]) s.talkbox(b.t(k), hz(root + 12 + n), (b.len / 4) * held * 0.95, 0.16);
+    } },
+    { name: 'horns and lead', play(s, b) {
+      // The horn section hits the chord hard on the one of every other bar, and stabs on the
+      // "and" of the last beat; over them a high synth whining a bright tune, sliding in.
+      const c = chordAt(FUNK_PROG, b), voicing = c.notes.slice(-3).map((n) => hz(n + 12));
+      if (b.beat === 0 && b.bar % 2 === 0) for (const f of voicing) s.brass(b.t(0), f, b.len * 0.3, 0.06, 1);
+      if (b.beat === b.meter.beats - 1) for (const f of voicing) s.brass(b.t(2), f, b.len * 0.15, 0.05, 1);
+      if (!b.group || b.beat === 0) return;
+      const n = funkLead.next(c, true);
+      if (n !== null) s.moog(b.t(0), hz(n - 2), hz(n), groupLeft(b) * b.len * 0.9, 0.07, { wave: 'square', cutoff: 3500, slide: 0.12, vibrato: 0.012 });
+    } },
+  ],
+};
+
+export const STYLES: readonly Style[] = [vibe, chill, trip, lotus, epic, anxiety, tekno, funky, chiptune, bluegrass];
 export const styleById = (id: string) => STYLES.find((s) => s.id === id) ?? STYLES[0];
